@@ -20,14 +20,14 @@ package app.lawnchair.font.googlefonts
 import android.content.Context
 import android.content.res.Resources
 import app.lawnchair.preferences2.PreferenceManager2
-import app.lawnchair.util.toArrayList
 import com.android.launcher3.util.MainThreadInitializedObject
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import org.json.JSONObject
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 class GoogleFontsListing private constructor(private val context: Context) {
     private val scope = CoroutineScope(CoroutineName("GoogleFontsListing"))
@@ -35,9 +35,8 @@ class GoogleFontsListing private constructor(private val context: Context) {
     private val dataProvider = MockDataProvider(context.resources)
     private val fonts by lazy { scope.async(Dispatchers.IO) { loadFontListing() } }
 
-    private suspend fun loadFontListing(): List<GoogleFontInfo> {
-        val json = dataProvider.getFontListing()
-        return parseFontListing(json)
+    private suspend fun loadFontListing(): List<GoogleFonts.GoogleFontInfo> {
+        return parseFontListing(dataProvider.getFontListing())
     }
 
     private suspend fun getAdditionalFonts(): List<String> {
@@ -47,43 +46,37 @@ class GoogleFontsListing private constructor(private val context: Context) {
         return listOf("Inter") + userFonts
     }
 
-    private suspend fun parseFontListing(json: JSONObject): List<GoogleFontInfo> {
-        val fonts = ArrayList<GoogleFontInfo>()
-        val items = json.getJSONArray(KEY_ITEMS)
-        for (i in (0 until items.length())) {
-            val font = items.getJSONObject(i)
-            val family = font.getString(KEY_FAMILY)
-            val variants = font.getJSONArray(KEY_VARIANTS).toArrayList<String>()
-            fonts.add(GoogleFontInfo(family, variants))
-        }
-        getAdditionalFonts().forEach {
-            fonts.add(GoogleFontInfo(it, listOf("regular", "italic", "500", "500italic", "700", "700italic")))
+    private suspend fun parseFontListing(jsonString: String): List<GoogleFonts.GoogleFontInfo> {
+        val fonts = Json.decodeFromString<GoogleFonts>(jsonString).items.toMutableList()
+        fonts += getAdditionalFonts().map {
+            GoogleFonts.GoogleFontInfo(
+                it,
+                listOf("regular", "italic", "500", "500italic", "700", "700italic")
+            )
         }
         fonts.sort()
         return fonts
     }
 
-    suspend fun getFonts(): List<GoogleFontInfo> {
+    suspend fun getFonts(): List<GoogleFonts.GoogleFontInfo> {
         return fonts.await()
     }
 
     sealed interface DataProvider {
-
-        fun getFontListing(): JSONObject
+        fun getFontListing(): String
     }
 
     class MockDataProvider(private val res: Resources) : DataProvider {
-
-        override fun getFontListing(): JSONObject {
-            val json = res.assets.open("google_fonts.json").bufferedReader().use { it.readText() }
-            return JSONObject(json)
+        override fun getFontListing(): String {
+            return res.assets.open("google_fonts.json").bufferedReader().use { it.readText() }
         }
     }
 
-    class GoogleFontInfo(val family: String, val variants: List<String>) : Comparable<GoogleFontInfo> {
-
-        override fun compareTo(other: GoogleFontInfo): Int {
-            return family.compareTo(other.family)
+    @Serializable
+    data class GoogleFonts(val items: List<GoogleFontInfo>) {
+        @Serializable
+        data class GoogleFontInfo(val family: String, val variants: List<String>) : Comparable<GoogleFontInfo> {
+            override fun compareTo(other: GoogleFontInfo): Int = family.compareTo(other.family)
         }
     }
 
